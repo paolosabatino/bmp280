@@ -1,3 +1,4 @@
+import math
 from smbus2 import SMBus
 import time
 
@@ -52,8 +53,14 @@ class Bmp280(object):
 
         # Oversampling values; higher values means higher precision, but also higher power usage and slower
         # sampling rate
-        self.oversampling_temp = 1
-        self.oversampling_press = 1
+        self.__oversampling_temp = 1
+        self.__oversampling_press = 1
+
+        # IIR filter coefficient, must be a power of two (see chapter 3.3.3 and 3.4) between 2 and 16, including 0
+        self.__iir_filter = 0
+
+        # stand-by time between reading in normal mode, must be an integer between 0 and 7 (see chapter 3.6.3)
+        self.__tsb = 7
 
         # Pressure value obtained from the sensor
         self.temperature = 0.0
@@ -65,6 +72,63 @@ class Bmp280(object):
         self.time = 0.0
 
         self._initialize_chip()
+
+    @property
+    def oversampling_temp(self):
+        return self.__oversampling_temp
+
+    @property
+    def oversampling_pressure(self):
+        return self.__oversampling_press
+
+    @property
+    def iir_filter(self):
+        return 0 if self.__iir_filter == 0 else math.pow(2, self.__iir_filter)
+
+    @property
+    def t_standby(self):
+        return self.__tsb
+
+    @oversampling_temp.setter
+    def oversampling_temp(self, value):
+        if value < 0 or value > 6:
+            raise ValueError("invalid oversampling rate for temperature parameter")
+        self.__oversampling_temp = value
+
+        # If in normal mode, restart normal mode to set the oversampling argument
+        if self.power_mode == self.MODE_NORMAL:
+            self.set_mode(self.MODE_NORMAL)
+
+    @oversampling_pressure.setter
+    def oversampling_pressure(self, value):
+        if value < 0 or value > 6:
+            raise ValueError("invalid oversampling rate for pressure parameter")
+        self.__oversampling_press = value
+
+        # If in normal mode, restart normal mode to set the oversampling argument
+        if self.power_mode == self.MODE_NORMAL:
+            self.set_mode(self.MODE_NORMAL)
+
+    @iir_filter.setter
+    def iir_filter(self, value):
+        if value not in (0, 2, 4, 8, 16):
+            raise ValueError("invalid iir filter value: it must be a power of two between 2 and 16, 0 to disable")
+
+        if value == 0:
+            self.__iir_filter = 0
+        else:
+            self.__iir_filter = int(math.log(value) / math.log(2))
+
+        self._set_config_reg()
+
+    @t_standby.setter
+    def t_standby(self, value):
+        if value < 0 or value > 7:
+            raise ValueError("invalid t_standby value, must be between 0 and 7")
+
+        self.__tsb = value
+
+        self._set_config_reg()
 
     def _initialize_chip(self):
         """
@@ -105,6 +169,21 @@ class Bmp280(object):
         for word in [0, 3]:
             if self.calibration_data[word] < 0:
                 self.calibration_data[word] += 65536
+
+        # Set config register with appropriate t_sb and iir_filter values
+        self._set_config_reg()
+
+    def _set_config_reg(self):
+        config = (self.__tsb << 5) | (self.__iir_filter << 2)
+
+        # If in NORMAL mode, we have to exit then enter again because the chip may not be able to update the
+        # config byte in this mode, as said in the specs
+        if self.power_mode == self.MODE_NORMAL:
+            self.set_mode(self.MODE_FORCED)
+            self.bus.write_byte_data(self.address, self.REG_CONFIG, config)
+            self.set_mode(self.MODE_NORMAL)
+        else:
+            self.bus.write_byte_data(self.address, self.REG_CONFIG, config)
 
     def _compensate_temp(self, adc_t: int, dig_t1: int, dig_t2: int, dig_t3) -> tuple:
         """
@@ -171,20 +250,16 @@ class Bmp280(object):
         :param mode:
         :return:
         """
-        # Mode is already set as defined mode, do nothing
-        if mode == self.power_mode:
-            return
-
         if mode == self.MODE_FORCED:
             # When MODE_FORCED is wanted, we just exit the NORMAL mode and enter into SLEEP mode
             # later, when a measurement is requested, we call MODE_FORCED to wake up the sensor and do the measurement
-            meas = (self.oversampling_temp << 5) | (self.oversampling_press << 2) | self.MODE_SLEEP
+            meas = (self.__oversampling_temp << 5) | (self.__oversampling_press << 2) | self.MODE_SLEEP
             self.bus.write_byte_data(self.address, self.REG_CTRL_MEAS, meas)
         elif mode == self.MODE_NORMAL:
             # Enter NORMAL mode, where the sensor reads the values in cyclically. Still you need to call
             # do_measure() to read the values from the sensor to the library, and then read the values with
             # getters
-            meas = (self.oversampling_temp << 5) | (self.oversampling_press << 2) | self.MODE_NORMAL
+            meas = (self.__oversampling_temp << 5) | (self.__oversampling_press << 2) | self.MODE_NORMAL
             self.bus.write_byte_data(self.address, self.REG_CTRL_MEAS, meas)
         else:
             raise ValueError("invalid power mode selected")
@@ -199,7 +274,7 @@ class Bmp280(object):
         """
         # If the chip is in sleep mode, do measure trigger the "forced" mode (one-shot sampling)
         if self.power_mode == self.MODE_FORCED:
-            meas = (self.oversampling_temp << 5) | (self.oversampling_press << 2) | self.MODE_FORCED
+            meas = (self.__oversampling_temp << 5) | (self.__oversampling_press << 2) | self.MODE_FORCED
             self.bus.write_byte_data(self.address, self.REG_CTRL_MEAS, meas)
 
             while True:

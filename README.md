@@ -1,5 +1,5 @@
 # bmp280
-BMP280 is small python library and companion measurement example script. Reduces traffic on the i2c bus to the least amount required to get a fully working device.
+BMP280 is small python library and companion measurement example scripts. Reduces traffic on the i2c bus to the least amount required to get a fully working device and aims to be a completely cover the bmp280 features.
 Only i2c bus is supported with this library.
 
 # Dependencies

@@ -2,12 +2,12 @@ from smbus2 import SMBus
 from bmp280 import Bmp280
 import time
 
+# This example script will do simple measurements in FORCED mode (ie: one shot)
+
 bus_id = 1
 
 bus = SMBus(bus_id)
 bmp280 = Bmp280(bus)
-
-bmp280.set_mode(bmp280.MODE_NORMAL)
 
 try:
     while True:
@@ -16,8 +16,6 @@ try:
         time.sleep(5)
 except KeyboardInterrupt:
     pass
-
-bmp280.set_mode(bmp280.MODE_FORCED)
 
 print("done")
 
