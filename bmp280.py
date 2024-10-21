@@ -1,8 +1,10 @@
+from smbus2 import SMBus
 import time
-import struct
-import ctypes
 
 class Bmp280(object):
+    """
+        Class to interact with BMP280 sensor chip
+    """
 
     BMP280_CHIP_ID = 0x58
 
@@ -31,7 +33,11 @@ class Bmp280(object):
     BIT_UPDATING = (1 << 0)
     BIT_MEASURING = (1 << 3)
 
-    def __init__(self, bus, address = DEFAULT_ADDRESS):
+    def __init__(self, bus: SMBus, address: int = DEFAULT_ADDRESS):
+        """
+        :param bus: SMBus instance of the bus where the sensor is allocated
+        :param address:  integer which is the sensor address on the bus
+        """
         # i2c/spi bus instance
         self.bus = bus
 
@@ -61,6 +67,10 @@ class Bmp280(object):
         self._initialize_chip()
 
     def _initialize_chip(self):
+        """
+            Do a softreset of the chip, take calibration data and initialize it with default settings
+        :return:
+        """
         # Do soft reset of the chip
         self.bus.write_byte(self.address, self.REG_RESET, self.RESET_MAGIC)
 
@@ -96,19 +106,16 @@ class Bmp280(object):
             if self.calibration_data[word] < 0:
                 self.calibration_data[word] += 65536
 
-        print(self.calibration_data)
-
     def _compensate_temp(self, adc_t: int, dig_t1: int, dig_t2: int, dig_t3) -> tuple:
         """
-        var1 = ((((adc_T >> 3) – ((BMP280_S32_t)dig_T1 << 1))) *((BMP280_S32_t)dig_T2)) >> 11;
-        var2 = (((((adc_T >> 4) – ((BMP280_S32_t)dig_T1)) * ((adc_T >> 4) – ((BMP280_S32_t)dig_T1))) >> 12) *
-        ((BMP280_S32_t)dig_T3)) >> 14;
-        t_fine = var1 + var2;
-        T = (t_fine * 5 + 128) >> 8;
+            Compensation formulae for temperature.
+            See chapter 8.1 of the official datasheet
+        :param adc_t:
+        :param dig_t1:
+        :param dig_t2:
+        :param dig_t3:
+        :return:
         """
-
-        print(adc_t, dig_t1, dig_t2, dig_t3)
-
         var1 = (((adc_t >> 3) - (dig_t1 << 1)) * dig_t2) >> 11
         var2 = (((adc_t >> 4) - dig_t1) * (((adc_t >> 4) - dig_t1) >> 12) * dig_t3) >> 14
         t_fine = var1 + var2
@@ -120,6 +127,8 @@ class Bmp280(object):
     def _compensate_pressure(self, adc_p: int, t_fine: int, dig_p1: int, dig_p2: int, dig_p3: int, dig_p4: int, dig_p5: int,
                              dig_p6: int, dig_p7: int, dig_p8: int, dig_p9: int) -> float:
         """
+            Compensation formulae for pressure
+            See chapter 8.1 of the official datasheet
         :param adc_p:
         :param t_fine:
         :param dig_p1:
@@ -153,7 +162,15 @@ class Bmp280(object):
         return p / 25600.0
 
     def set_mode(self, mode):
-
+        """
+            Set chip mode between MODE_FORCED and MODE_NORMAL.
+            MODE_FORCED is a one-shot type mode: measurement is taken when @see do_measure() is called, then the chip goes
+                automatically to SLEEP mode.
+            MODE_NORMAL sets the chip to continuously take measurements on its own; @see do_measure() is still needed
+                to collect fresh data from the chip whenever needed.
+        :param mode:
+        :return:
+        """
         # Mode is already set as defined mode, do nothing
         if mode == self.power_mode:
             return
